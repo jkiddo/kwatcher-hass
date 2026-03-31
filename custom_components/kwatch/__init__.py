@@ -30,7 +30,11 @@ FRONTEND_URL = "/kwatch/kwatch-message-card.js"
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the K-Watch Messenger integration (platform-level)."""
-    hass.http.register_static_path(FRONTEND_URL, FRONTEND_PATH, cache_headers=False)
+    from homeassistant.components.http import StaticPathConfig
+
+    await hass.http.async_register_static_paths(
+        [StaticPathConfig(FRONTEND_URL, FRONTEND_PATH, cache_headers=False)]
+    )
     return True
 
 
