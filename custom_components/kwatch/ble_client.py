@@ -1,10 +1,10 @@
 """Persistent BLE connection manager for the K-WATCH.
 
 The K-WATCH firmware does not set the "BR/EDR Not Supported" flag in its BLE
-advertising data. This causes BlueZ to treat it as a dual-mode device and
-attempt classic Bluetooth connections, which always fail. To work around this,
-we manipulate BlueZ via D-Bus to remove the stale dual-mode entry, set the
-discovery filter to LE-only, and then connect -- forcing a BLE connection.
+advertising data. BlueZ therefore treats it as dual-mode and tries classic
+Bluetooth first, which always fails. We work around this by calling BlueZ's
+Device1.Connect() directly via D-Bus, which (after the BR/EDR timeout) falls
+back to LE. We then hand the connected device to bleak for GATT operations.
 """
 
 from __future__ import annotations
@@ -16,8 +16,7 @@ from typing import Any
 
 from bleak import BleakClient
 from bleak.exc import BleakError
-from bleak_retry_connector import establish_connection
-from dbus_fast import BusType, Variant
+from dbus_fast import BusType
 from dbus_fast.aio import MessageBus
 from homeassistant.components.bluetooth import (
     async_ble_device_from_address,
@@ -45,6 +44,9 @@ _LOGGER = logging.getLogger(__name__)
 
 BLUEZ_SERVICE = "org.bluez"
 ADAPTER_PATH = "/org/bluez/hci0"
+
+# BR/EDR page timeout is ~20s, then BlueZ tries LE which takes a few seconds.
+_DBUS_CONNECT_TIMEOUT = 40.0
 
 
 class KWatchBleClient:
@@ -102,48 +104,44 @@ class KWatchBleClient:
         self._reconnect_delay = RECONNECT_BASE_DELAY
         self._hass.async_create_task(self.connect())
 
-    async def _force_le_in_bluez(self) -> None:
-        """Remove stale BlueZ device entry and set LE-only discovery filter.
+    async def _connect_via_dbus(self) -> bool:
+        """Call BlueZ Device1.Connect() directly via D-Bus.
 
-        BlueZ caches the K-WATCH as a dual-mode device (because of missing
-        BR/EDR Not Supported flag) and tries classic BT first, which fails.
-        Removing the device and setting the transport filter to LE forces
-        BlueZ to re-discover and connect via BLE only.
+        This lets BlueZ handle the BR/EDR-to-LE fallback internally rather
+        than going through bleak/bleak_retry_connector which may time out
+        before the fallback completes.
+
+        Returns True if the D-Bus connection succeeded.
         """
         device_path = (
             f"{ADAPTER_PATH}/dev_{self._address.replace(':', '_').upper()}"
         )
+        bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
         try:
-            bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
-            try:
-                # Remove stale dual-mode device entry
-                introspection = await bus.introspect(BLUEZ_SERVICE, ADAPTER_PATH)
-                adapter_obj = bus.get_proxy_object(
-                    BLUEZ_SERVICE, ADAPTER_PATH, introspection
-                )
-                adapter = adapter_obj.get_interface("org.bluez.Adapter1")
-                try:
-                    await adapter.call_remove_device(device_path)
-                    _LOGGER.debug("Removed stale BlueZ entry for %s", self._address)
-                except Exception:
-                    _LOGGER.debug("No stale BlueZ entry to remove for %s", self._address)
+            introspection = await bus.introspect(BLUEZ_SERVICE, device_path)
+            device_obj = bus.get_proxy_object(
+                BLUEZ_SERVICE, device_path, introspection
+            )
+            device1 = device_obj.get_interface("org.bluez.Device1")
 
-                # Set discovery filter to LE-only so the device is
-                # re-discovered without a BREDR entry
-                try:
-                    await adapter.call_set_discovery_filter(
-                        {"Transport": Variant("s", "le")}
-                    )
-                    _LOGGER.debug("Set BlueZ discovery filter to LE-only")
-                except Exception as err:
-                    _LOGGER.debug("Could not set discovery filter: %s", err)
-            finally:
-                bus.disconnect()
+            _LOGGER.debug(
+                "Calling Device1.Connect() via D-Bus for %s (timeout=%ss)",
+                self._address,
+                _DBUS_CONNECT_TIMEOUT,
+            )
+            await asyncio.wait_for(
+                device1.call_connect(), timeout=_DBUS_CONNECT_TIMEOUT
+            )
+            _LOGGER.debug("D-Bus Device1.Connect() succeeded for %s", self._address)
+            return True
+        except asyncio.TimeoutError:
+            _LOGGER.debug("D-Bus Device1.Connect() timed out for %s", self._address)
+            return False
         except Exception as err:
-            _LOGGER.debug("D-Bus manipulation failed (non-fatal): %s", err)
-
-        # Wait for HA's scanner to re-discover the device as LE-only
-        await asyncio.sleep(5)
+            _LOGGER.debug("D-Bus Device1.Connect() failed for %s: %s", self._address, err)
+            return False
+        finally:
+            bus.disconnect()
 
     async def connect(self) -> None:
         """Establish BLE connection."""
@@ -152,24 +150,36 @@ class KWatchBleClient:
         self._connecting = True
 
         try:
-            # Force BlueZ to treat this as an LE device
-            await self._force_le_in_bluez()
+            # First try connecting at the BlueZ level via D-Bus.
+            # This handles the BR/EDR-to-LE fallback with a generous timeout.
+            dbus_ok = await self._connect_via_dbus()
+            if not dbus_ok:
+                _LOGGER.warning(
+                    "K-WATCH %s: BlueZ D-Bus connect failed, will retry",
+                    self._address,
+                )
+                self._schedule_reconnect()
+                return
 
+            # BlueZ has connected. Now wrap with BleakClient for GATT.
+            # BleakClient.connect() on an already-connected device just
+            # discovers services.
             ble_device = async_ble_device_from_address(
                 self._hass, self._address, connectable=True
             )
             if not ble_device:
-                _LOGGER.warning("K-WATCH %s not found after LE reset, will retry", self._address)
+                _LOGGER.warning(
+                    "K-WATCH %s: connected at BlueZ level but not in HA cache",
+                    self._address,
+                )
                 self._schedule_reconnect()
                 return
 
-            _LOGGER.debug("K-WATCH %s found, connecting via establish_connection", self._address)
-            self._client = await establish_connection(
-                BleakClient,
+            self._client = BleakClient(
                 ble_device,
-                self._address,
                 disconnected_callback=self._on_disconnect,
             )
+            await self._client.connect()
 
             await self._client.start_notify(RX_CHAR_UUID, self._on_notification)
 
