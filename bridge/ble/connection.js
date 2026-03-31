@@ -47,17 +47,25 @@ class BleConnection extends EventEmitter {
     this._shuttingDown = false;
 
     // Wait for adapter to be ready
+    console.log(`[BLE] Noble state: ${noble.state}`);
     if (noble.state !== 'poweredOn') {
       console.log('[BLE] Waiting for Bluetooth adapter...');
       await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('Bluetooth adapter timeout')), 10000);
-        noble.once('stateChange', (state) => {
-          clearTimeout(timeout);
-          if (state === 'poweredOn') resolve();
-          else reject(new Error(`Adapter state: ${state}`));
-        });
+        const timeout = setTimeout(() => {
+          console.log(`[BLE] Timeout. Noble state is: ${noble.state}`);
+          reject(new Error('Bluetooth adapter timeout'));
+        }, 15000);
+        const onState = (state) => {
+          console.log(`[BLE] State changed: ${state}`);
+          if (state === 'poweredOn') {
+            clearTimeout(timeout);
+            resolve();
+          }
+        };
+        noble.on('stateChange', onState);
         // Check again in case state changed while setting up listener
         if (noble.state === 'poweredOn') {
+          noble.removeListener('stateChange', onState);
           clearTimeout(timeout);
           resolve();
         }
