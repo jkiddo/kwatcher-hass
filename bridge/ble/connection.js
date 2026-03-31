@@ -6,7 +6,7 @@
 const EventEmitter = require('events');
 const fs = require('fs');
 const noble = require('@stoprocent/noble');
-const { encodeKeepaliveResponse, encodeTimeSync, encodeBatteryRequest, parseResponse } = require('./protocol');
+const { encodeKeepaliveResponse, parseResponse } = require('./protocol');
 
 const TX_UUIDS = ['33f3', '000033f300001000800000805f9b34fb'];
 const RX_UUIDS = ['33f4', '000033f400001000800000805f9b34fb'];
@@ -17,15 +17,6 @@ function uuidMatch(charUuid, candidates) {
 }
 
 class BleConnection extends EventEmitter {
-  /**
-   * @param {object} config
-   * @param {string} config.deviceName - BLE advertised name to scan for
-   * @param {number} config.scanTimeout - Seconds to scan before giving up
-   * @param {number} config.reconnectBaseDelay - Initial reconnect delay (seconds)
-   * @param {number} config.reconnectMaxDelay - Max reconnect delay (seconds)
-   * @param {number} config.interPacketDelay - ms between multi-packet writes
-   * @param {string} config.knownDeviceFile - Path to persist device info
-   */
   constructor(config) {
     super();
     this._config = config;
@@ -36,7 +27,7 @@ class BleConnection extends EventEmitter {
     this._shuttingDown = false;
     this._reconnectDelay = config.reconnectBaseDelay;
     this._reconnectTimer = null;
-    this._discoveredDevices = new Map();
+    this._knownDevice = null;
   }
 
   get connected() {
@@ -46,24 +37,24 @@ class BleConnection extends EventEmitter {
   async start() {
     this._shuttingDown = false;
 
-    // Wait for adapter to be ready
     console.log(`[BLE] Noble state: ${noble.state}`);
     if (noble.state !== 'poweredOn') {
       console.log('[BLE] Waiting for Bluetooth adapter...');
       await new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
+          noble.removeListener('stateChange', onState);
           console.log(`[BLE] Timeout. Noble state is: ${noble.state}`);
           reject(new Error('Bluetooth adapter timeout'));
         }, 15000);
         const onState = (state) => {
           console.log(`[BLE] State changed: ${state}`);
           if (state === 'poweredOn') {
+            noble.removeListener('stateChange', onState);
             clearTimeout(timeout);
             resolve();
           }
         };
         noble.on('stateChange', onState);
-        // Check again in case state changed while setting up listener
         if (noble.state === 'poweredOn') {
           noble.removeListener('stateChange', onState);
           clearTimeout(timeout);
@@ -74,7 +65,7 @@ class BleConnection extends EventEmitter {
     console.log('[BLE] Adapter ready');
 
     // Try auto-reconnect to known device first
-    const known = this._loadKnownDevice();
+    const known = this._knownDevice || this._loadKnownDevice();
     if (known) {
       console.log(`[BLE] Known device: ${known.name} (${known.id})`);
       const found = await this._scanForDevice(known.id, known.name);
@@ -85,7 +76,6 @@ class BleConnection extends EventEmitter {
       console.log('[BLE] Known device not found, scanning for any K-WATCH...');
     }
 
-    // Scan for any matching device
     const device = await this._scanForDevice(null, this._config.deviceName);
     if (device) {
       await this._connectToPeripheral(device);
@@ -99,6 +89,9 @@ class BleConnection extends EventEmitter {
     this._shuttingDown = true;
     clearTimeout(this._reconnectTimer);
     try { await noble.stopScanningAsync(); } catch (_) {}
+    if (this._rxChar) {
+      try { this._rxChar.removeAllListeners('data'); } catch (_) {}
+    }
     if (this._peripheral && this._connected) {
       try { await this._peripheral.disconnectAsync(); } catch (_) {}
     }
@@ -107,11 +100,6 @@ class BleConnection extends EventEmitter {
     this._rxChar = null;
   }
 
-  /**
-   * Write a 20-byte packet to the TX characteristic with retry.
-   * First attempt with response, subsequent without response.
-   * @param {Buffer} data
-   */
   async write(data) {
     if (!this._txChar) throw new Error('TX characteristic not available');
     const buf = Buffer.alloc(20);
@@ -124,7 +112,7 @@ class BleConnection extends EventEmitter {
         return;
       } catch (err) {
         console.log(`[BLE] Write attempt ${attempt + 1} failed: ${err.message}`);
-        await this._sleep(300);
+        await new Promise(r => setTimeout(r, 300));
       }
     }
     throw new Error('Write failed after 3 attempts');
@@ -132,14 +120,7 @@ class BleConnection extends EventEmitter {
 
   // ── Scanning ────────────────────────────────────────────────────────────
 
-  /**
-   * Scan for a device by ID or name.
-   * @param {string|null} targetId - Specific noble ID to match, or null for name match
-   * @param {string} targetName - Name prefix to match
-   * @returns {Promise<object|null>} Noble peripheral or null
-   */
   async _scanForDevice(targetId, targetName) {
-    this._discoveredDevices.clear();
     const timeout = this._config.scanTimeout * 1000;
 
     return new Promise(async (resolve) => {
@@ -157,12 +138,9 @@ class BleConnection extends EventEmitter {
         if (targetId && p.id === targetId) {
           console.log(`[BLE] Found known device: ${name} (${p.id})`);
           done(p);
-          return;
-        }
-        if (!targetId && name.includes(targetName)) {
+        } else if (!targetId && name.includes(targetName)) {
           console.log(`[BLE] Found device: ${name} (${p.id})`);
           done(p);
-          return;
         }
       };
 
@@ -187,8 +165,8 @@ class BleConnection extends EventEmitter {
     const scanAddress = peripheral.address || peripheral.id;
     console.log(`[BLE] Connecting to ${name} (${scanAddress}) addressType=${peripheral.addressType}...`);
 
-    // On Linux, force random address type for the K-WATCH's locally-administered address.
-    // On macOS, CoreBluetooth handles address types internally -- don't touch it.
+    // On Linux, the K-WATCH's locally-administered address needs random type.
+    // On macOS, CoreBluetooth handles address types internally.
     if (process.platform === 'linux' && peripheral.addressType === 'public') {
       console.log(`[BLE] Overriding addressType to "random" (Linux)`);
       peripheral.addressType = 'random';
@@ -211,6 +189,9 @@ class BleConnection extends EventEmitter {
     peripheral.once('disconnect', (reason) => {
       console.log(`[BLE] Disconnected (reason: ${reason})`);
       this._connected = false;
+      if (this._rxChar) {
+        try { this._rxChar.removeAllListeners('data'); } catch (_) {}
+      }
       this._txChar = null;
       this._rxChar = null;
       this.emit('disconnected');
@@ -231,17 +212,15 @@ class BleConnection extends EventEmitter {
         throw new Error('TX/RX characteristics not found');
       }
 
-      // Subscribe to notifications
       this._rxChar.on('data', (data) => this._onNotification(data));
       await this._rxChar.subscribeAsync();
 
       this._connected = true;
       this._reconnectDelay = this._config.reconnectBaseDelay;
-      this._saveKnownDevice({
-        id: peripheral.id,
-        name: name,
-        address: scanAddress,
-      });
+
+      const deviceInfo = { id: peripheral.id, name, address: scanAddress };
+      this._knownDevice = deviceInfo;
+      this._saveKnownDevice(deviceInfo);
 
       console.log(`[BLE] Ready (TX: ${this._txChar.uuid}, RX: ${this._rxChar.uuid})`);
       this.emit('connected');
@@ -256,7 +235,6 @@ class BleConnection extends EventEmitter {
   _onNotification(data) {
     const parsed = parseResponse(data);
 
-    // Handle keepalive immediately
     if (parsed.type === 'keepalive') {
       this.write(encodeKeepaliveResponse()).catch(err =>
         console.log(`[BLE] Keepalive response failed: ${err.message}`)
@@ -271,6 +249,7 @@ class BleConnection extends EventEmitter {
 
   _scheduleReconnect() {
     if (this._shuttingDown) return;
+    clearTimeout(this._reconnectTimer);
     const delay = this._reconnectDelay;
     this._reconnectDelay = Math.min(this._reconnectDelay * 2, this._config.reconnectMaxDelay);
     console.log(`[BLE] Reconnecting in ${delay}s...`);
@@ -286,7 +265,9 @@ class BleConnection extends EventEmitter {
 
   _loadKnownDevice() {
     try {
-      return JSON.parse(fs.readFileSync(this._config.knownDeviceFile, 'utf8'));
+      const data = JSON.parse(fs.readFileSync(this._config.knownDeviceFile, 'utf8'));
+      this._knownDevice = data;
+      return data;
     } catch (_) {
       return null;
     }
@@ -298,10 +279,6 @@ class BleConnection extends EventEmitter {
     } catch (err) {
       console.log(`[BLE] Failed to save known device: ${err.message}`);
     }
-  }
-
-  _sleep(ms) {
-    return new Promise(r => setTimeout(r, ms));
   }
 }
 

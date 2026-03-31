@@ -4,6 +4,8 @@
 
 const fs = require('fs');
 
+const RESPONSE_TIMEOUT = 'No response';
+
 class HistoryManager {
   constructor(config, mqtt) {
     this._config = config;
@@ -24,27 +26,19 @@ class HistoryManager {
   }
 
   addMessage(title, message) {
-    const entry = {
+    this._expirePending();
+
+    this._history.unshift({
       title,
       message,
       sent_at: new Date().toISOString(),
       response: null,
       responded_at: null,
-    };
-
-    // If there's a pending message, time it out
-    if (this._history.length > 0 && this._history[0].response === null) {
-      this._history[0].response = 'No response';
-      this._history[0].responded_at = new Date().toISOString();
-    }
-
-    this._history.unshift(entry);
+    });
     this._history = this._history.slice(0, this._config.maxHistoryEntries);
 
     this._clearTimeout();
-    this._timeoutTimer = setTimeout(() => {
-      this._onTimeout();
-    }, this._config.messageTimeout * 1000);
+    this._timeoutTimer = setTimeout(() => this._onTimeout(), this._config.messageTimeout * 1000);
 
     this._save();
     this._publishHistory();
@@ -61,31 +55,30 @@ class HistoryManager {
 
   resolveMessage(response) {
     this._clearTimeout();
-    const now = new Date().toISOString();
 
     if (this._history.length > 0 && this._history[0].response === null) {
-      // Resolve the pending message
       this._history[0].response = response;
-      this._history[0].responded_at = now;
+      this._history[0].responded_at = new Date().toISOString();
       this._save();
       this._publishHistory();
     }
 
-    // Always publish the latest response, even if unsolicited
-    this._mqtt.publishRetained(`message/last`, JSON.stringify({
-      message: this._history.length > 0 ? this._history[0].message : null,
-      response,
-      sent_at: this._history.length > 0 ? this._history[0].sent_at : null,
-      responded_at: now,
-    }));
+    // Always publish the latest response state, even if unsolicited
+    this._publishLast(response);
+  }
+
+  _expirePending() {
+    if (this._history.length > 0 && this._history[0].response === null) {
+      this._history[0].response = RESPONSE_TIMEOUT;
+      this._history[0].responded_at = new Date().toISOString();
+    }
   }
 
   _onTimeout() {
     this._timeoutTimer = null;
     if (this._history.length > 0 && this._history[0].response === null) {
       console.log('[HISTORY] Message timed out');
-      this._history[0].response = 'No response';
-      this._history[0].responded_at = new Date().toISOString();
+      this._expirePending();
       this._save();
       this._publishHistory();
       this._publishLast();
@@ -103,18 +96,21 @@ class HistoryManager {
     this._mqtt.publishRetained('message/history', JSON.stringify(this._history));
   }
 
-  _publishLast() {
+  /**
+   * Publish the last message state. If responseOverride is given (for unsolicited
+   * responses), use it; otherwise use the most recent history entry.
+   */
+  _publishLast(responseOverride) {
     const last = this._history[0];
-    if (last) {
-      this._mqtt.publishRetained('message/last', JSON.stringify(last));
-    } else {
-      this._mqtt.publishRetained('message/last', JSON.stringify({
-        message: '',
-        response: 'Idle',
-        sent_at: null,
-        responded_at: null,
-      }));
-    }
+    const payload = last
+      ? {
+          message: last.message,
+          response: responseOverride || last.response,
+          sent_at: last.sent_at,
+          responded_at: last.responded_at,
+        }
+      : { message: '', response: 'Idle', sent_at: null, responded_at: null };
+    this._mqtt.publishRetained('message/last', JSON.stringify(payload));
   }
 
   _save() {

@@ -10,11 +10,15 @@ class MqttBridge extends EventEmitter {
     super();
     this._config = config;
     this._client = null;
-    this._baseTopic = config.mqttBaseTopic;
+  }
+
+  get _baseTopic() {
+    return this._config.mqttBaseTopic;
   }
 
   async connect() {
     return new Promise((resolve, reject) => {
+      let settled = false;
       const opts = {
         clientId: 'kwatch-bridge',
         will: {
@@ -30,13 +34,18 @@ class MqttBridge extends EventEmitter {
       console.log(`[MQTT] Connecting to ${this._config.mqttBroker}...`);
       this._client = mqtt.connect(this._config.mqttBroker, opts);
 
-      this._client.on('connect', () => {
+      const timeout = setTimeout(() => {
+        if (!settled) { settled = true; reject(new Error('MQTT connection timeout')); }
+      }, 10000);
+
+      this._client.once('connect', () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
         console.log('[MQTT] Connected');
         this._client.publish(
           `${this._baseTopic}/bridge/status`, 'online', { retain: true }
         );
-
-        // Subscribe to command topics
         this._client.subscribe(`${this._baseTopic}/command/#`, (err) => {
           if (err) console.error(`[MQTT] Subscribe error: ${err.message}`);
         });
@@ -49,6 +58,7 @@ class MqttBridge extends EventEmitter {
 
       this._client.on('error', (err) => {
         console.error(`[MQTT] Error: ${err.message}`);
+        if (!settled) { settled = true; clearTimeout(timeout); reject(err); }
       });
 
       this._client.on('offline', () => {
@@ -58,37 +68,19 @@ class MqttBridge extends EventEmitter {
       this._client.on('reconnect', () => {
         console.log('[MQTT] Reconnecting...');
       });
-
-      // Timeout for initial connection
-      setTimeout(() => reject(new Error('MQTT connection timeout')), 10000);
     });
   }
 
-  /**
-   * Publish to a topic under the base topic.
-   * @param {string} subTopic - Topic suffix (e.g. "device/battery")
-   * @param {string} payload
-   */
   publish(subTopic, payload) {
     if (!this._client) return;
     this._client.publish(`${this._baseTopic}/${subTopic}`, payload);
   }
 
-  /**
-   * Publish with retain flag.
-   * @param {string} subTopic
-   * @param {string} payload
-   */
   publishRetained(subTopic, payload) {
     if (!this._client) return;
     this._client.publish(`${this._baseTopic}/${subTopic}`, payload, { retain: true });
   }
 
-  /**
-   * Publish to an absolute topic (for HA discovery).
-   * @param {string} topic
-   * @param {string} payload
-   */
   publishAbsolute(topic, payload) {
     if (!this._client) return;
     this._client.publish(topic, payload, { retain: true });

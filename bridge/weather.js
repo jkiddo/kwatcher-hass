@@ -65,10 +65,7 @@ async function fetchAndEncodeWeather(config) {
 
   console.log(`[WEATHER] Today: ${Math.round(days[0].temp)}°C, condition=${days[0].conditionId}, AQI=${days[0].aqi}, PM2.5=${days[0].pm25}, UV=${days[0].uvIndex}`);
 
-  return days.map((day, i) => {
-    day.index = i;
-    return encodeWeather(day);
-  });
+  return days.map((day, i) => encodeWeather({ ...day, index: i }));
 }
 
 function groupForecastByDay(list) {

@@ -8,16 +8,19 @@ const PACKET_SIZE = 20;
 const PAYLOAD_SIZE = 17;
 
 const CMD_TIME_SYNC = 0x01;
+const CMD_VIBRATE = 0x04;
+const CMD_TRIGGER_LOST = 0x05;
 const CMD_BATTERY = 0x0b;
 const CMD_NOTIFICATION = 0x12;
+const CMD_WEATHER = 0x22;
 const CMD_KEEPALIVE = 0x3a;
 
 const RESP_EVENT = 0x06;
 const RESP_BATTERY = 0x0b;
 const RESP_KEEPALIVE = 0x3a;
 
-const EVENT_FIND_PHONE = 0x01; // "No"
-const EVENT_TAKE_PHOTO = 0x02; // "OK - got it"
+const EVENT_FIND_PHONE = 0x01;
+const EVENT_TAKE_PHOTO = 0x02;
 
 /**
  * Encode a notification as a multi-packet sequence.
@@ -185,7 +188,7 @@ function encodeWeather(w) {
   const aqi = Math.round(w.aqi || 0);
 
   const pkt = Buffer.alloc(PACKET_SIZE);
-  pkt[0] = 0x22;
+  pkt[0] = CMD_WEATHER;
   pkt[1] = (w.index || 0) & 0xff;
   pkt.writeUInt32LE(ts, 2);
   pkt.writeUInt16LE(weatherType, 6);      // daytime weather
@@ -207,10 +210,10 @@ function encodeWeather(w) {
  */
 function encodeVibrate(intensity = 10) {
   const pkt1 = Buffer.alloc(PACKET_SIZE);
-  pkt1[0] = 0x05;
+  pkt1[0] = CMD_TRIGGER_LOST;
   pkt1[1] = intensity & 0xff;
   const pkt2 = Buffer.alloc(PACKET_SIZE);
-  pkt2[0] = 0x04;
+  pkt2[0] = CMD_VIBRATE;
   pkt2[1] = intensity & 0xff;
   return [pkt1, pkt2];
 }

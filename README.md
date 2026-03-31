@@ -48,16 +48,16 @@ The `.env` file configures all credentials and settings:
 ```env
 # MQTT
 MQTT_BROKER=mqtt://homeassistant.local:1883
-MQTT_USERNAME=your-user
-MQTT_PASSWORD=your-pass
+MQTT_USERNAME=kwatch
+MQTT_PASSWORD=changeme
 
 # Weather - OpenWeatherMap (https://openweathermap.org/api)
-OWM_API_KEY=your-owm-key
-OWM_LAT=55.6761
-OWM_LON=12.5683
+OWM_API_KEY=4711db55c096a5f06189cf465db54e51
+OWM_LAT=56.1629
+OWM_LON=10.2039
 
 # Air Quality - WAQI (https://aqicn.org/data-platform/token/)
-WAQI_TOKEN=your-waqi-token
+WAQI_TOKEN=0b94731c9428eccb6a21ca9ab52a58bf6a3f8995
 ```
 
 The bridge will scan for a K-WATCH, connect, and start publishing state to MQTT. It auto-reconnects on disconnect and persists the known device across restarts.
@@ -183,8 +183,6 @@ The K-WATCH firmware does not set the "BR/EDR Not Supported" BLE advertising fla
 - MQTT broker (e.g. Mosquitto) accessible from both the bridge and HA
 - Home Assistant with MQTT integration configured
 - K-WATCH BLE fitness tracker
-- OpenWeatherMap API key (free tier) for weather sync
-- WAQI API token (free) for air quality data
 
 ## License
 

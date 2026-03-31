@@ -8,7 +8,7 @@ const RESPONSE_OK = "OK - got it";
 const RESPONSE_NO = "No";
 const RESPONSE_TIMEOUT = "No response";
 const DEFAULT_TITLE = "HA";
-const MQTT_COMMAND_TOPIC = "kwatch/command/send_message";
+const DEFAULT_TOPIC_PREFIX = "kwatch/command";
 
 class KWatchMessageCard extends HTMLElement {
   static getConfigElement() {
@@ -53,7 +53,7 @@ class KWatchMessageCard extends HTMLElement {
       response_entity: config.response_entity,
       battery_entity: config.battery_entity,
       connection_entity: config.connection_entity,
-      command_topic: config.command_topic || MQTT_COMMAND_TOPIC,
+      topic_prefix: config.topic_prefix || DEFAULT_TOPIC_PREFIX,
     };
     this._rendered = false;
   }
@@ -191,7 +191,7 @@ class KWatchMessageCard extends HTMLElement {
           padding: 0;
         }
         .kw-clear-btn:hover { color: var(--primary-text-color); }
-        .kw-vibrate-btn {
+        .kw-action-btn {
           padding: 8px 12px;
           border: 1px solid var(--divider-color, #e0e0e0);
           border-radius: 8px;
@@ -201,33 +201,8 @@ class KWatchMessageCard extends HTMLElement {
           font-size: 0.95em;
           white-space: nowrap;
         }
-        .kw-vibrate-btn:hover { opacity: 0.9; }
-        .kw-vibrate-btn:disabled, .kw-weather-btn:disabled {
-          opacity: 0.5;
-          cursor: not-allowed;
-        }
-        .kw-weather-btn {
-          padding: 8px 12px;
-          border: 1px solid var(--divider-color, #e0e0e0);
-          border-radius: 8px;
-          background: var(--card-background-color, #fff);
-          color: var(--primary-text-color);
-          cursor: pointer;
-          font-size: 0.95em;
-          white-space: nowrap;
-        }
-        .kw-weather-btn:hover, .kw-time-btn:hover { opacity: 0.9; }
-        .kw-time-btn {
-          padding: 8px 12px;
-          border: 1px solid var(--divider-color, #e0e0e0);
-          border-radius: 8px;
-          background: var(--card-background-color, #fff);
-          color: var(--primary-text-color);
-          cursor: pointer;
-          font-size: 0.95em;
-          white-space: nowrap;
-        }
-        .kw-time-btn:disabled {
+        .kw-action-btn:hover { opacity: 0.9; }
+        .kw-action-btn:disabled {
           opacity: 0.5;
           cursor: not-allowed;
         }
@@ -242,9 +217,9 @@ class KWatchMessageCard extends HTMLElement {
       <div class="kw-input-area">
         <input type="text" class="kw-message-input" placeholder="Type a message..." />
         <button class="kw-send-btn">Send</button>
-        <button class="kw-vibrate-btn" title="Vibrate watch">Buzz</button>
-        <button class="kw-weather-btn" title="Sync weather to watch">Weather</button>
-        <button class="kw-time-btn" title="Sync time to watch">Time</button>
+        <button class="kw-action-btn" data-command="vibrate" title="Vibrate watch">Buzz</button>
+        <button class="kw-action-btn" data-command="sync_weather" title="Sync weather to watch">Weather</button>
+        <button class="kw-action-btn" data-command="sync_time" title="Sync time to watch">Time</button>
       </div>
       <div class="kw-history">
         <div class="kw-history-header">
@@ -264,44 +239,29 @@ class KWatchMessageCard extends HTMLElement {
       if (e.key === "Enter") this._sendMessage();
     });
 
-    this.querySelector(".kw-vibrate-btn").addEventListener("click", () => {
-      this._hass.callService("mqtt", "publish", {
-        topic: "kwatch/command/vibrate",
-        payload: "",
-      });
+    // Action buttons + clear: all publish to MQTT command topics
+    this.querySelectorAll("[data-command]").forEach((el) => {
+      el.addEventListener("click", () => this._publishCommand(el.dataset.command));
     });
-
-    this.querySelector(".kw-weather-btn").addEventListener("click", () => {
-      this._hass.callService("mqtt", "publish", {
-        topic: "kwatch/command/sync_weather",
-        payload: "",
-      });
-    });
-
-    this.querySelector(".kw-time-btn").addEventListener("click", () => {
-      this._hass.callService("mqtt", "publish", {
-        topic: "kwatch/command/sync_time",
-        payload: "",
-      });
-    });
-
     this.querySelector(".kw-clear-btn").addEventListener("click", () => {
-      this._hass.callService("mqtt", "publish", {
-        topic: "kwatch/command/clear_history",
-        payload: "",
-      });
+      this._publishCommand("clear_history");
+    });
+  }
+
+  _publishCommand(command, payload = "") {
+    if (!this._hass) return;
+    this._hass.callService("mqtt", "publish", {
+      topic: `${this._config.topic_prefix}/${command}`,
+      payload,
     });
   }
 
   _sendMessage() {
     const input = this.querySelector(".kw-message-input");
     const message = input.value.trim();
-    if (!message || !this._hass) return;
+    if (!message) return;
 
-    this._hass.callService("mqtt", "publish", {
-      topic: this._config.command_topic,
-      payload: JSON.stringify({ title: DEFAULT_TITLE, message }),
-    });
+    this._publishCommand("send_message", JSON.stringify({ title: DEFAULT_TITLE, message }));
     input.value = "";
   }
 
@@ -328,14 +288,9 @@ class KWatchMessageCard extends HTMLElement {
     }
 
     const disconnected = !connectionState || connectionState.state !== "on";
-    const btn = this.querySelector(".kw-send-btn");
-    if (btn) btn.disabled = disconnected;
-    const buzzBtn = this.querySelector(".kw-vibrate-btn");
-    if (buzzBtn) buzzBtn.disabled = disconnected;
-    const weatherBtn = this.querySelector(".kw-weather-btn");
-    if (weatherBtn) weatherBtn.disabled = disconnected;
-    const timeBtn = this.querySelector(".kw-time-btn");
-    if (timeBtn) timeBtn.disabled = disconnected;
+    this.querySelectorAll(".kw-send-btn, .kw-action-btn").forEach((el) => {
+      el.disabled = disconnected;
+    });
 
     const historyList = this.querySelector(".kw-history-list");
     if (!historyList || !responseState) return;
