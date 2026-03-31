@@ -10,8 +10,12 @@ from typing import Any
 from bleak import BleakClient
 from bleak.exc import BleakError
 from bleak_retry_connector import establish_connection
-from homeassistant.components.bluetooth import async_ble_device_from_address
-from homeassistant.core import HomeAssistant
+from homeassistant.components.bluetooth import (
+    async_ble_device_from_address,
+    async_register_callback,
+)
+from homeassistant.components.bluetooth.match import BluetoothCallbackMatcher
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant
 
 from .const import (
     INTER_PACKET_DELAY,
@@ -51,10 +55,41 @@ class KWatchBleClient:
         self._reconnect_task: asyncio.Task | None = None
         self._reconnect_delay = RECONNECT_BASE_DELAY
         self._shutting_down = False
+        self._ble_callback_cancel: CALLBACK_TYPE | None = None
 
     @property
     def connected(self) -> bool:
         return self._client is not None and self._client.is_connected
+
+    def start_watching(self) -> None:
+        """Register a BLE advertisement callback so we connect as soon as the watch is seen."""
+        if self._ble_callback_cancel is not None:
+            return
+        self._ble_callback_cancel = async_register_callback(
+            self._hass,
+            self._on_ble_advertisement,
+            BluetoothCallbackMatcher(address=self._address),
+            mode="active",
+        )
+        _LOGGER.debug("Watching for K-WATCH %s advertisements", self._address)
+
+    def _stop_watching(self) -> None:
+        """Unregister the BLE advertisement callback."""
+        if self._ble_callback_cancel:
+            self._ble_callback_cancel()
+            self._ble_callback_cancel = None
+
+    def _on_ble_advertisement(self, service_info: Any, change: Any) -> None:
+        """Called when HA's bluetooth scanner sees our device advertising."""
+        if self.connected or self._shutting_down:
+            return
+        _LOGGER.debug("K-WATCH %s seen advertising, connecting...", self._address)
+        # Cancel any pending backoff reconnect -- we can connect now
+        if self._reconnect_task and not self._reconnect_task.done():
+            self._reconnect_task.cancel()
+            self._reconnect_task = None
+        self._reconnect_delay = RECONNECT_BASE_DELAY
+        self._hass.async_create_task(self.connect())
 
     async def connect(self) -> None:
         """Establish BLE connection and subscribe to notifications."""
@@ -92,6 +127,7 @@ class KWatchBleClient:
     async def disconnect(self) -> None:
         """Disconnect and stop reconnection attempts."""
         self._shutting_down = True
+        self._stop_watching()
         if self._reconnect_task and not self._reconnect_task.done():
             self._reconnect_task.cancel()
             self._reconnect_task = None
@@ -145,6 +181,7 @@ class KWatchBleClient:
         self._client = None
         self._on_connection_change(False)
         if not self._shutting_down:
+            self.start_watching()
             self._schedule_reconnect()
 
     def _schedule_reconnect(self) -> None:

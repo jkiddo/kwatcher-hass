@@ -9,6 +9,7 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.typing import ConfigType
 
 from .const import DEFAULT_NOTIFICATION_TITLE, DOMAIN
@@ -60,6 +61,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 return
 
             coord = next(iter(coordinators.values()))
+            if not coord.ble_client.connected:
+                raise HomeAssistantError(
+                    "K-Watch is not connected. Make sure the watch is nearby and Bluetooth is enabled."
+                )
             await coord.send_message(title, message)
 
         hass.services.async_register(
