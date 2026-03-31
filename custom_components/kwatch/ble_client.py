@@ -7,7 +7,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from bleak import BleakClient
+from bleak import BleakClient, BleakScanner
 from bleak.exc import BleakError
 from bleak_retry_connector import establish_connection
 from homeassistant.components.bluetooth import (
@@ -91,22 +91,44 @@ class KWatchBleClient:
         self._hass.async_create_task(self.connect())
 
     async def connect(self) -> None:
-        """Establish BLE connection and subscribe to notifications."""
+        """Establish BLE connection and subscribe to notifications.
+
+        The K-WATCH firmware does not set the "BR/EDR Not Supported" flag in its
+        advertising data, which causes BlueZ to attempt a classic Bluetooth
+        connection instead of BLE. To work around this, we use BleakScanner to
+        discover the device as a proper LE device, then connect using that
+        scanner result which carries the correct transport metadata.
+        """
         try:
-            ble_device = async_ble_device_from_address(
-                self._hass, self._address, connectable=True
+            # Use BleakScanner to get a properly-tagged LE device object.
+            # This avoids BlueZ trying BR/EDR due to missing ad flags.
+            _LOGGER.debug("Scanning for K-WATCH %s via BleakScanner", self._address)
+            ble_device = await BleakScanner.find_device_by_address(
+                self._address, timeout=15.0
             )
+
+            if not ble_device:
+                # Fall back to HA's bluetooth cache
+                ble_device = async_ble_device_from_address(
+                    self._hass, self._address, connectable=True
+                )
+
             if not ble_device:
                 _LOGGER.warning("K-WATCH %s not found, will retry", self._address)
                 self._schedule_reconnect()
                 return
 
-            self._client = await establish_connection(
-                BleakClient,
-                ble_device,
+            _LOGGER.debug(
+                "K-WATCH %s found (details: %s), connecting",
                 self._address,
-                disconnected_callback=self._on_disconnect,
+                ble_device.details,
             )
+            self._client = BleakClient(
+                ble_device,
+                disconnected_callback=self._on_disconnect,
+                timeout=20.0,
+            )
+            await self._client.connect()
 
             await self._client.start_notify(RX_CHAR_UUID, self._on_notification)
 
