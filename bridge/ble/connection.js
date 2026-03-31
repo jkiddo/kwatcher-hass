@@ -185,7 +185,14 @@ class BleConnection extends EventEmitter {
   async _connectToPeripheral(peripheral) {
     const name = peripheral.advertisement.localName || peripheral.id;
     const scanAddress = peripheral.address || peripheral.id;
-    console.log(`[BLE] Connecting to ${name} (${scanAddress})...`);
+    console.log(`[BLE] Connecting to ${name} (${scanAddress}) addressType=${peripheral.addressType}...`);
+
+    // Force random address type -- the K-WATCH uses a locally-administered
+    // address (02:xx) but may be reported as 'unknown' or 'public' by noble.
+    if (peripheral.addressType !== 'random') {
+      console.log(`[BLE] Overriding addressType from "${peripheral.addressType}" to "random"`);
+      peripheral.addressType = 'random';
+    }
 
     try {
       await noble.stopScanningAsync();
