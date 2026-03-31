@@ -9,6 +9,7 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.helpers.typing import ConfigType
 
 from .const import DOMAIN
 from .coordinator import KWatchCoordinator
@@ -23,6 +24,17 @@ SEND_MESSAGE_SCHEMA = vol.Schema(
         vol.Optional("title", default="HA"): str,
     }
 )
+
+FRONTEND_PATH = str(Path(__file__).parent / "frontend" / "kwatch-message-card.js")
+FRONTEND_URL = "/kwatch/kwatch-message-card.js"
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Set up the K-Watch Messenger integration (platform-level)."""
+    # Register the static path for the Lovelace card early so it's
+    # available even before a config entry is fully loaded.
+    hass.http.register_static_path(FRONTEND_URL, FRONTEND_PATH, cache_headers=False)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -52,13 +64,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_register(
             DOMAIN, "send_message", handle_send_message, schema=SEND_MESSAGE_SCHEMA
         )
-
-    # Serve the Lovelace card as a static file
-    hass.http.register_static_path(
-        "/kwatch/kwatch-message-card.js",
-        str(Path(__file__).parent / "frontend" / "kwatch-message-card.js"),
-        cache_headers=False,
-    )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
