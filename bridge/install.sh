@@ -20,7 +20,7 @@ echo "Node.js $(node --version)"
 # Copy bridge files
 echo "Installing bridge to /opt/kwatch-bridge..."
 sudo mkdir -p /opt/kwatch-bridge/ble /opt/kwatch-bridge/mqtt
-sudo cp package.json config.js index.js /opt/kwatch-bridge/
+sudo cp package.json config.js index.js weather.js /opt/kwatch-bridge/
 sudo cp ble/*.js /opt/kwatch-bridge/ble/
 sudo cp mqtt/*.js /opt/kwatch-bridge/mqtt/
 
