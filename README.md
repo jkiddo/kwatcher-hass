@@ -71,12 +71,12 @@ Once the bridge is running, HA auto-discovers these entities:
 
 | Entity | Type | Description |
 |--------|------|-------------|
-| `sensor.kwatch_battery` | Sensor | Battery level (%) |
-| `binary_sensor.kwatch_connection` | Binary Sensor | BLE connection status |
-| `sensor.kwatch_last_response` | Sensor | Last response from watch wearer |
-| `sensor.kwatch_last_message` | Sensor | Last sent message text |
-| `sensor.kwatch_heart_rate` | Sensor | Heart rate (bpm) |
-| `number.kwatch_unsolicited_timeout` | Number | Unsolicited event timeout (min) |
+| `sensor.k_watch_battery` | Sensor | Battery level (%) |
+| `binary_sensor.k_watch_connection` | Binary Sensor | BLE connection status |
+| `sensor.k_watch_last_response` | Sensor | Last response from watch wearer |
+| `sensor.k_watch_last_message` | Sensor | Last sent message text |
+| `sensor.k_watch_heart_rate` | Sensor | Heart rate (bpm) |
+| `number.k_watch_unsolicited_event_timeout` | Number | Unsolicited event timeout (min) |
 
 ### 3. Lovelace Cards
 
@@ -94,9 +94,9 @@ Send messages, vibrate, sync weather/time, and view response history.
 
 ```yaml
 type: custom:kwatch-message-card
-response_entity: sensor.kwatch_last_response
-battery_entity: sensor.kwatch_battery
-connection_entity: binary_sensor.kwatch_connection
+response_entity: sensor.k_watch_last_response
+battery_entity: sensor.k_watch_battery
+connection_entity: binary_sensor.k_watch_connection
 ```
 
 - **Send** — Send a text message to the watch
@@ -113,8 +113,8 @@ Displays the latest heart rate reading with a pulsing heart animation when data 
 
 ```yaml
 type: custom:kwatch-heartrate-card
-heart_rate_entity: sensor.kwatch_heart_rate
-connection_entity: binary_sensor.kwatch_connection
+heart_rate_entity: sensor.k_watch_heart_rate
+connection_entity: binary_sensor.k_watch_connection
 ```
 
 Heart rate data arrives from the watch in three ways:
@@ -124,11 +124,9 @@ Heart rate data arrives from the watch in three ways:
 
 All three are published to `kwatch/device/heart_rate` as `{"bpm": <value>, "timestamp": "..."}`.
 
-Note: check the exact entity IDs in Developer Tools > States, as HA may adjust them.
-
 ## Unsolicited Events
 
-When the watch wearer presses a button without a pending message (or after the configurable timeout has expired), the event is published to MQTT with `"unsolicited": true`. The timeout is controlled by the `number.kwatch_unsolicited_timeout` entity (default: 3 minutes, range: 1–30 minutes), which appears as a slider in the HA frontend.
+When the watch wearer presses a button without a pending message (or after the configurable timeout has expired), the event is published to MQTT with `"unsolicited": true`. The timeout is controlled by the `number.k_watch_unsolicited_event_timeout` entity (default: 3 minutes, range: 1–30 minutes), which appears as a slider in the HA frontend.
 
 To send a phone notification on unsolicited events, add this automation to HA:
 
@@ -194,7 +192,7 @@ Trigger on watch response:
 automation:
   trigger:
     platform: state
-    entity_id: sensor.kwatch_last_response
+    entity_id: sensor.k_watch_last_response
     to: "No"
   action:
     - service: notify.mobile_app
