@@ -24,6 +24,19 @@ sudo cp package.json config.js index.js weather.js /opt/kwatch-bridge/
 sudo cp ble/*.js /opt/kwatch-bridge/ble/
 sudo cp mqtt/*.js /opt/kwatch-bridge/mqtt/
 
+# Copy .env if not already present (don't overwrite existing config)
+if [ ! -f /opt/kwatch-bridge/.env ]; then
+    if [ -f .env ]; then
+        sudo cp .env /opt/kwatch-bridge/.env
+        echo "Copied .env — edit /opt/kwatch-bridge/.env with your credentials"
+    elif [ -f .env.example ]; then
+        sudo cp .env.example /opt/kwatch-bridge/.env
+        echo "Copied .env.example — edit /opt/kwatch-bridge/.env with your credentials"
+    fi
+else
+    echo "Existing .env preserved"
+fi
+
 # Install npm dependencies
 echo "Installing npm dependencies..."
 cd /opt/kwatch-bridge

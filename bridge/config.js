@@ -39,13 +39,8 @@ module.exports = {
   interPacketDelay: parseInt(process.env.INTER_PACKET_DELAY, 10) || 50,
   batteryPollInterval: parseInt(process.env.BATTERY_POLL_INTERVAL, 10) || 300,
 
-  // Unsolicited event timeout (minutes) — events after this are sent as phone notifications
+  // Unsolicited event timeout (minutes) — events after this are published as unsolicited via MQTT
   unsolicitedTimeout: parseFloat(process.env.UNSOLICITED_TIMEOUT) || 3,
-
-  // Home Assistant (for phone notifications)
-  haUrl: process.env.HA_URL || 'http://homeassistant.local:8123',
-  haToken: process.env.HA_TOKEN || '',
-  notifyService: process.env.HA_NOTIFY_SERVICE || 'mobile_app_pixel_10_pro_xl',
 
   // Weather
   owmApiKey: process.env.OWM_API_KEY || '',

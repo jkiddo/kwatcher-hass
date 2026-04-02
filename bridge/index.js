@@ -6,8 +6,6 @@
  */
 
 const fs = require('fs');
-const http = require('http');
-const https = require('https');
 const config = require('./config');
 const BleConnection = require('./ble/connection');
 const { encodeTimeSync, encodeBatteryRequest, encodeNotification, encodeVibrate, encodeHeartRateStart, encodeHeartRateStop } = require('./ble/protocol');
@@ -48,48 +46,6 @@ function applyUnsolicitedTimeout(minutes) {
   mqtt.publishRetained('config/unsolicited_timeout', String(minutes));
   saveSettings();
   console.log(`[BRIDGE] Unsolicited timeout set to ${minutes} min`);
-}
-
-// ── HA phone notification ──────────────────────────────────────────────
-
-const EVENT_LABELS = { ok: 'Take Photo', no: 'Find Phone' };
-
-function sendPhoneNotification(action) {
-  if (!config.haToken) {
-    console.log('[BRIDGE] No HA_TOKEN configured, skipping phone notification');
-    return;
-  }
-
-  const label = EVENT_LABELS[action] || action;
-  const url = new URL(`/api/services/notify/${config.notifyService}`, config.haUrl);
-  const transport = url.protocol === 'https:' ? https : http;
-  const body = JSON.stringify({
-    title: 'K-WATCH',
-    message: `${label} button pressed`,
-  });
-
-  const req = transport.request(url, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${config.haToken}`,
-      'Content-Type': 'application/json',
-      'Content-Length': Buffer.byteLength(body),
-    },
-  }, (res) => {
-    if (res.statusCode !== 200) {
-      console.error(`[BRIDGE] Phone notification failed: HTTP ${res.statusCode}`);
-    } else {
-      console.log(`[BRIDGE] Phone notification sent: ${label}`);
-    }
-    res.resume();
-  });
-
-  req.on('error', (err) => {
-    console.error(`[BRIDGE] Phone notification error: ${err.message}`);
-  });
-
-  req.write(body);
-  req.end();
 }
 
 function sleep(ms) {
@@ -151,12 +107,11 @@ ble.on('data', (parsed) => {
     if (parsed.action === 'ok' || parsed.action === 'no') {
       const unsolicited = !history.hasPendingMessage();
 
-      if (unsolicited) {
-        console.log(`[BRIDGE] Unsolicited watch event: ${parsed.action}`);
-        sendPhoneNotification(parsed.action);
-      } else {
+      if (!unsolicited) {
         const response = parsed.action === 'ok' ? 'OK - got it' : 'No';
         history.resolveMessage(response);
+      } else {
+        console.log(`[BRIDGE] Unsolicited watch event: ${parsed.action}`);
       }
 
       mqtt.publish('device/event', JSON.stringify({
