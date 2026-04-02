@@ -98,9 +98,11 @@ class KWatchMessageCard extends HTMLElement {
           padding: 12px 16px;
           display: flex;
           gap: 8px;
+          flex-wrap: wrap;
         }
         .kw-input-area input {
-          flex: 1;
+          flex: 1 1 60%;
+          min-width: 0;
           padding: 8px 12px;
           border: 1px solid var(--divider-color, #e0e0e0);
           border-radius: 8px;
