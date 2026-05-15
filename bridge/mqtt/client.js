@@ -38,10 +38,7 @@ class MqttBridge extends EventEmitter {
         if (!settled) { settled = true; reject(new Error('MQTT connection timeout')); }
       }, 10000);
 
-      this._client.once('connect', () => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
+      this._client.on('connect', () => {
         console.log('[MQTT] Connected');
         this._client.publish(
           `${this._baseTopic}/bridge/status`, 'online', { retain: true }
@@ -52,7 +49,12 @@ class MqttBridge extends EventEmitter {
         ], (err) => {
           if (err) console.error(`[MQTT] Subscribe error: ${err.message}`);
         });
-        resolve();
+        this.emit('connect');
+        if (!settled) {
+          settled = true;
+          clearTimeout(timeout);
+          resolve();
+        }
       });
 
       this._client.on('message', (topic, payload) => {

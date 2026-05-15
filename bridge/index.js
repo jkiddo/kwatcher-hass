@@ -63,6 +63,7 @@ async function writePackets(packets, delay) {
 
 ble.on('connected', async () => {
   console.log('[BRIDGE] Watch connected');
+  mqtt.publishRetained('bridge/status', 'online');
   mqtt.publishRetained('device/connection', 'online');
 
   try {
