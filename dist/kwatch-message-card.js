@@ -7,7 +7,7 @@
 const RESPONSE_OK = "OK - got it";
 const RESPONSE_NO = "No";
 const RESPONSE_TIMEOUT = "No response";
-const DEFAULT_TITLE = "HA";
+const DEFAULT_TITLE = "Far";
 const DEFAULT_TOPIC_PREFIX = "kwatch/command";
 
 const NOTIFICATION_APPS = [
